@@ -2,29 +2,50 @@ package com.promptplayer.data
 
 import android.content.Context
 import android.net.Uri
+import org.apache.poi.hwpf.HWPFDocument
 import org.apache.poi.xwpf.extractor.XWPFWordExtractor
 import org.apache.poi.xwpf.usermodel.XWPFDocument
 import java.nio.charset.Charset
 
 class DocumentParser {
 
-    fun parseDocument(context: Context, uri: Uri, mimeType: String?): List<String> {
+    data class ParseResult(
+        val sentences: List<String>,
+        val rawText: String
+    )
+
+    fun parseDocument(context: Context, uri: Uri, mimeType: String?): ParseResult {
         return when {
-            mimeType == "text/plain" || mimeType?.endsWith(".txt") == true -> parseTxt(context, uri)
+            mimeType == "text/plain" || mimeType?.endsWith(".txt") == true -> {
+                val text = parseTxt(context, uri)
+                ParseResult(splitIntoSentences(text), text)
+            }
             mimeType == "application/vnd.openxmlformats-officedocument.wordprocessingml.document" ||
-            mimeType?.endsWith(".docx") == true -> parseDocx(context, uri)
-            else -> tryParseAsTxt(context, uri)
+            mimeType?.endsWith(".docx") == true -> {
+                val text = parseDocx(context, uri)
+                ParseResult(splitIntoSentences(text), text)
+            }
+            mimeType == "application/msword" || mimeType?.endsWith(".doc") == true -> {
+                val text = parseDoc(context, uri)
+                ParseResult(splitIntoSentences(text), text)
+            }
+            else -> {
+                val text = tryParseAsTxt(context, uri)
+                ParseResult(splitIntoSentences(text), text)
+            }
         }
     }
 
-    private fun parseTxt(context: Context, uri: Uri): List<String> {
-        val sentences = mutableListOf<String>()
+    fun parseSentencesOnly(context: Context, uri: Uri, mimeType: String?): List<String> {
+        return parseDocument(context, uri, mimeType).sentences
+    }
+
+    private fun parseTxt(context: Context, uri: Uri): String {
         context.contentResolver.openInputStream(uri)?.use { inputStream ->
             val bytes = inputStream.readBytes()
-            val text = detectAndDecode(bytes)
-            sentences.addAll(splitIntoSentences(text))
+            return detectAndDecode(bytes)
         }
-        return sentences
+        return ""
     }
 
     private fun detectAndDecode(bytes: ByteArray): String {
@@ -60,41 +81,45 @@ class DocumentParser {
         var score = 0
         for (ch in text) {
             when {
-                ch in '\u4e00'..'\u9fff' -> score += 3       // CJK unified ideographs
-                ch in '\u3400'..'\u4dbf' -> score += 3       // CJK extension A
-                ch in '\uf900'..'\ufaff' -> score += 3       // CJK compatibility
-                ch in '\u3000'..'\u303f' -> score += 1       // CJK punctuation
-                ch in '\uff00'..'\uffef' -> score += 1       // fullwidth forms
-                ch == '\ufffd'          -> score -= 5        // replacement char penalty
+                ch in '\u4e00'..'\u9fff' -> score += 3
+                ch in '\u3400'..'\u4dbf' -> score += 3
+                ch in '\uf900'..'\ufaff' -> score += 3
+                ch in '\u3000'..'\u303f' -> score += 1
+                ch in '\uff00'..'\uffef' -> score += 1
+                ch == '\ufffd'          -> score -= 5
             }
         }
         return score
     }
 
-    private fun parseDocx(context: Context, uri: Uri): List<String> {
-        val sentences = mutableListOf<String>()
+    private fun parseDocx(context: Context, uri: Uri): String {
         context.contentResolver.openInputStream(uri)?.use { inputStream ->
             XWPFDocument(inputStream).use { document ->
                 val extractor = XWPFWordExtractor(document)
-                val fullText = extractor.text
-                if (fullText.isNotBlank()) {
-                    sentences.addAll(splitIntoSentences(fullText))
-                }
+                return extractor.text
             }
         }
-        return sentences
+        return ""
     }
 
-    private fun tryParseAsTxt(context: Context, uri: Uri): List<String> {
+    private fun parseDoc(context: Context, uri: Uri): String {
+        context.contentResolver.openInputStream(uri)?.use { inputStream ->
+            HWPFDocument(inputStream).use { document ->
+                return document.documentText
+            }
+        }
+        return ""
+    }
+
+    private fun tryParseAsTxt(context: Context, uri: Uri): String {
         return try {
             parseTxt(context, uri)
         } catch (e: Exception) {
-            emptyList()
+            ""
         }
     }
 
-    private fun splitIntoSentences(text: String): List<String> {
-        // Split on sentence-ending punctuation and pauses: 。！？；，、：\n
+    fun splitIntoSentences(text: String): List<String> {
         val sentenceDelimiters = Regex("[。！？；，、：\n]+")
         return text.split(sentenceDelimiters)
             .map { it.trim() }

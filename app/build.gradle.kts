@@ -58,6 +58,8 @@ dependencies {
     implementation("androidx.lifecycle:lifecycle-viewmodel-compose:2.6.2")
     implementation("org.apache.poi:poi:5.2.4")
     implementation("org.apache.poi:poi-ooxml:5.2.4")
+    implementation("org.apache.poi:poi-scratchpad:5.2.4")
+    implementation("androidx.compose.material:material-icons-extended:1.5.4")
     implementation("com.alphacephei:vosk-android:0.3.47")
     debugImplementation("androidx.compose.ui:ui-tooling:1.5.4")
 }

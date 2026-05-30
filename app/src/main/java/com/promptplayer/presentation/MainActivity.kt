@@ -15,6 +15,7 @@ import androidx.compose.animation.core.tween
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
 import androidx.compose.foundation.background
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.itemsIndexed
@@ -23,7 +24,11 @@ import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Add
+import androidx.compose.material.icons.filled.Create
+import androidx.compose.material.icons.filled.Delete
+import androidx.compose.material.icons.filled.FolderOpen
 import androidx.compose.material.icons.filled.Settings
+import androidx.compose.material.icons.filled.Folder
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
@@ -35,23 +40,26 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import androidx.compose.ui.window.Dialog
+import androidx.compose.ui.window.DialogProperties
 import androidx.core.content.ContextCompat
 import androidx.lifecycle.viewmodel.compose.viewModel
 import com.promptplayer.domain.TextMatcher
 import com.promptplayer.speech.VoskSpeechRecognitionHelper
 
-// ── Color palette ──────────────────────────────────────────────────
-private val GradientStart   = Color(0xFF0D0D1A)
-private val GradientEnd     = Color(0xFF1A1A2E)
-private val AccentBlue      = Color(0xFF64B5F6)
-private val AccentTeal      = Color(0xFF4DD0E1)
-private val SurfaceDark     = Color(0xFF1E1E30)
-private val RedAccent       = Color(0xFFEF5350)
-private val GreenStatus     = Color(0xFF66BB6A)
-private val AmberStatus     = Color(0xFFFFA726)
-private val GreyStatus      = Color(0xFF757575)
+private val GradientStart = Color(0xFF0D0D1A)
+private val GradientEnd = Color(0xFF1A1A2E)
+private val AccentBlue = Color(0xFF64B5F6)
+private val AccentTeal = Color(0xFF4DD0E1)
+private val SurfaceDark = Color(0xFF1E1E30)
+private val RedAccent = Color(0xFFEF5350)
+private val GreenStatus = Color(0xFF66BB6A)
+private val AmberStatus = Color(0xFFFFA726)
+private val GreyStatus = Color(0xFF757575)
+private val SurfaceLight = Color(0xFF2A2A40)
 
 class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
@@ -74,20 +82,26 @@ fun PromptPlayerApp(viewModel: PromptViewModel = viewModel()) {
     var showSettings by remember { mutableStateOf(false) }
     var speechError by remember { mutableStateOf<String?>(null) }
 
-    // Vosk state
     var voskHelper by remember { mutableStateOf<VoskSpeechRecognitionHelper?>(null) }
     var modelReady by remember { mutableStateOf(false) }
     var modelLoading by remember { mutableStateOf(false) }
     var lastMatchedIndex by remember { mutableIntStateOf(0) }
 
-    // Smooth animated position for sentence transitions
+    // Text input dialog state
+    var showTextInputDialog by remember { mutableStateOf(false) }
+    var textInputContent by remember { mutableStateOf("") }
+    var textInputName by remember { mutableStateOf("") }
+
+    // Refresh file list on start
+    LaunchedEffect(Unit) {
+        viewModel.refreshFileList(context)
+    }
+
     val animatedIndex by animateFloatAsState(
         targetValue = currentIndex.toFloat(),
         animationSpec = tween(durationMillis = 350)
     )
 
-    // Scroll target for smooth, multi-trigger scrolling.
-    // Updated by both currentIndex changes and end-of-sentence detection.
     var scrollTarget by remember { mutableIntStateOf(0) }
 
     val documentPickerLauncher = rememberLauncherForActivityResult(
@@ -99,6 +113,7 @@ fun PromptPlayerApp(viewModel: PromptViewModel = viewModel()) {
             sentences = viewModel.sentences
             currentIndex = 0
             lastMatchedIndex = 0
+            viewModel.refreshFileList(context)
         }
     }
 
@@ -117,8 +132,6 @@ fun PromptPlayerApp(viewModel: PromptViewModel = viewModel()) {
                         currentIndex = newIndex
                         lastMatchedIndex = newIndex
                     } else if (lastMatchedIndex < sentences.size - 1) {
-                        // Index unchanged — check if user is at the end of the
-                        // current sentence and pre-scroll to show the next one.
                         if (TextMatcher.isEndOfSentence(partial, sentences[lastMatchedIndex])) {
                             scrollTarget = maxOf(0, lastMatchedIndex - 1)
                         }
@@ -157,15 +170,12 @@ fun PromptPlayerApp(viewModel: PromptViewModel = viewModel()) {
         }
     }
 
-    // Scroll when scrollTarget changes (triggered by both currentIndex
-    // changes and end-of-sentence pre-scroll detection).
     LaunchedEffect(scrollTarget) {
         if (sentences.isNotEmpty() && scrollTarget >= 0) {
             listState.animateScrollToItem(scrollTarget)
         }
     }
 
-    // Update scrollTarget when currentIndex changes (normal sentence advance).
     LaunchedEffect(currentIndex) {
         if (sentences.isNotEmpty() && currentIndex >= 0) {
             scrollTarget = maxOf(0, currentIndex - 2)
@@ -178,7 +188,6 @@ fun PromptPlayerApp(viewModel: PromptViewModel = viewModel()) {
         }
     }
 
-    // Initialize Vosk model
     LaunchedEffect(Unit) {
         if (voskHelper == null) {
             modelLoading = true
@@ -202,7 +211,6 @@ fun PromptPlayerApp(viewModel: PromptViewModel = viewModel()) {
         }
     }
 
-    // ── UI Layout ──────────────────────────────────────────────────
     Box(
         modifier = Modifier
             .fillMaxSize()
@@ -233,7 +241,6 @@ fun PromptPlayerApp(viewModel: PromptViewModel = viewModel()) {
                     },
                     actions = {
                         if (sentences.isNotEmpty()) {
-                            // Microphone status indicator
                             Row(
                                 verticalAlignment = Alignment.CenterVertically,
                                 modifier = Modifier.padding(end = 4.dp)
@@ -278,18 +285,57 @@ fun PromptPlayerApp(viewModel: PromptViewModel = viewModel()) {
                 )
             },
             floatingActionButton = {
-                if (sentences.isNotEmpty()) {
-                    Column(
-                        horizontalAlignment = Alignment.End,
-                        verticalArrangement = Arrangement.spacedBy(12.dp)
-                    ) {
-                        // Import / Swap file
+                Column(
+                    horizontalAlignment = Alignment.End,
+                    verticalArrangement = Arrangement.spacedBy(12.dp)
+                ) {
+                    // Only show import/input when empty or has content (always visible)
+                    if (sentences.isEmpty()) {
+                        // Empty state: show import + text input buttons
+                        FloatingActionButton(
+                            onClick = { showTextInputDialog = true },
+                            containerColor = SurfaceDark,
+                            contentColor = Color.White.copy(alpha = 0.8f),
+                            shape = RoundedCornerShape(16.dp)
+                        ) {
+                            Icon(
+                                imageVector = Icons.Default.Create,
+                                contentDescription = "手动输入",
+                                modifier = Modifier.size(24.dp)
+                            )
+                        }
+                        Spacer(Modifier.height(4.dp))
+
+                        FloatingActionButton(
+                            onClick = {
+                                documentPickerLauncher.launch(
+                                    arrayOf(
+                                        "text/plain",
+                                        "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+                                        "application/msword",
+                                        "*/*"
+                                    )
+                                )
+                            },
+                            containerColor = AccentBlue,
+                            contentColor = Color.White,
+                            shape = RoundedCornerShape(20.dp)
+                        ) {
+                            Icon(
+                                imageVector = Icons.Default.FolderOpen,
+                                contentDescription = "导入文档",
+                                modifier = Modifier.size(24.dp)
+                            )
+                        }
+                    } else {
+                        // Has content: show swap file + mic controls
                         SmallFloatingActionButton(
                             onClick = {
                                 documentPickerLauncher.launch(
                                     arrayOf(
                                         "text/plain",
                                         "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+                                        "application/msword",
                                         "*/*"
                                     )
                                 )
@@ -305,7 +351,6 @@ fun PromptPlayerApp(viewModel: PromptViewModel = viewModel()) {
                             )
                         }
 
-                        // Start / Stop microphone
                         FloatingActionButton(
                             onClick = {
                                 if (isListening) {
@@ -331,7 +376,7 @@ fun PromptPlayerApp(viewModel: PromptViewModel = viewModel()) {
                             shape = RoundedCornerShape(20.dp)
                         ) {
                             Text(
-                                text = if (isListening) "⏹" else "▶",
+                                text = if (isListening) "\u23F9" else "\u25B6",
                                 fontSize = 20.sp
                             )
                         }
@@ -347,54 +392,121 @@ fun PromptPlayerApp(viewModel: PromptViewModel = viewModel()) {
             ) {
                 when {
                     sentences.isEmpty() -> {
-                        // ── Empty state ──
-                        Box(
-                            modifier = Modifier.fillMaxSize(),
-                            contentAlignment = Alignment.Center
+                        LazyColumn(
+                            modifier = Modifier
+                                .fillMaxSize()
+                                .padding(horizontal = 20.dp),
+                            verticalArrangement = Arrangement.spacedBy(8.dp)
                         ) {
-                            Column(horizontalAlignment = Alignment.CenterHorizontally) {
-                                Text(
-                                    text = "提词器",
-                                    fontSize = 28.sp,
-                                    fontWeight = FontWeight.Bold,
-                                    color = Color.White.copy(alpha = 0.3f)
-                                )
-                                Spacer(Modifier.height(16.dp))
-                                Text(
-                                    text = "点击下方按钮导入文档",
-                                    fontSize = 14.sp,
-                                    color = Color.White.copy(alpha = 0.35f)
-                                )
-                                Text(
-                                    text = "支持 TXT 和 DOCX 格式",
-                                    fontSize = 12.sp,
-                                    color = Color.White.copy(alpha = 0.25f)
-                                )
-                                Spacer(Modifier.height(24.dp))
-                                FilledTonalButton(
-                                    onClick = {
-                                        documentPickerLauncher.launch(
-                                            arrayOf(
-                                                "text/plain",
-                                                "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
-                                                "*/*"
-                                            )
-                                        )
-                                    },
-                                    colors = ButtonDefaults.filledTonalButtonColors(
-                                        containerColor = SurfaceDark,
-                                        contentColor = AccentBlue
-                                    ),
-                                    shape = RoundedCornerShape(14.dp)
+                            // Header
+                            item {
+                                Column(
+                                    modifier = Modifier
+                                        .fillMaxWidth()
+                                        .padding(top = 40.dp, bottom = 20.dp),
+                                    horizontalAlignment = Alignment.CenterHorizontally
                                 ) {
-                                    Text("选择文档", fontSize = 14.sp)
+                                    Text(
+                                        text = "提词器",
+                                        fontSize = 28.sp,
+                                        fontWeight = FontWeight.Bold,
+                                        color = Color.White.copy(alpha = 0.3f)
+                                    )
+                                    Spacer(Modifier.height(8.dp))
+                                    Text(
+                                        text = "导入文档或手动输入内容开始",
+                                        fontSize = 14.sp,
+                                        color = Color.White.copy(alpha = 0.35f)
+                                    )
+                                    Text(
+                                        text = "支持 TXT / DOCX / DOC 格式",
+                                        fontSize = 12.sp,
+                                        color = Color.White.copy(alpha = 0.25f)
+                                    )
+                                }
+                            }
+
+                            // File list header
+                            item {
+                                val savedFiles = viewModel.savedFiles
+                                if (savedFiles.isNotEmpty()) {
+                                    Text(
+                                        text = "已保存的文稿",
+                                        fontSize = 13.sp,
+                                        fontWeight = FontWeight.Medium,
+                                        color = Color.White.copy(alpha = 0.5f),
+                                        modifier = Modifier.padding(top = 8.dp, bottom = 4.dp)
+                                    )
+                                }
+                            }
+
+                            // File list items
+                            val savedFiles = viewModel.savedFiles
+                            itemsIndexed(savedFiles) { _, file ->
+                                Card(
+                                    modifier = Modifier
+                                        .fillMaxWidth()
+                                        .clickable {
+                                            viewModel.loadSavedFile(context, file)
+                                            sentences = viewModel.sentences
+                                            currentIndex = 0
+                                            lastMatchedIndex = 0
+                                        },
+                                    colors = CardDefaults.cardColors(
+                                        containerColor = SurfaceDark.copy(alpha = 0.7f)
+                                    ),
+                                    shape = RoundedCornerShape(12.dp)
+                                ) {
+                                    Row(
+                                        modifier = Modifier
+                                            .fillMaxWidth()
+                                            .padding(16.dp),
+                                        verticalAlignment = Alignment.CenterVertically
+                                    ) {
+                                        Icon(
+                                            imageVector = Icons.Default.Folder,
+                                            contentDescription = null,
+                                            tint = AccentBlue.copy(alpha = 0.7f),
+                                            modifier = Modifier.size(20.dp)
+                                        )
+                                        Spacer(Modifier.width(12.dp))
+                                        Column(modifier = Modifier.weight(1f)) {
+                                            Text(
+                                                text = file.name,
+                                                fontSize = 14.sp,
+                                                color = Color.White,
+                                                maxLines = 1,
+                                                overflow = TextOverflow.Ellipsis
+                                            )
+                                            Text(
+                                                text = file.preview,
+                                                fontSize = 11.sp,
+                                                color = Color.White.copy(alpha = 0.35f),
+                                                maxLines = 1,
+                                                overflow = TextOverflow.Ellipsis
+                                            )
+                                        }
+                                        Spacer(Modifier.width(8.dp))
+                                        IconButton(
+                                            onClick = {
+                                                viewModel.deleteFile(context, file)
+                                            },
+                                            modifier = Modifier.size(32.dp)
+                                        ) {
+                                            Icon(
+                                                imageVector = Icons.Default.Delete,
+                                                contentDescription = "删除",
+                                                tint = RedAccent.copy(alpha = 0.4f),
+                                                modifier = Modifier.size(16.dp)
+                                            )
+                                        }
+                                    }
                                 }
                             }
                         }
                     }
 
                     else -> {
-                        // ── Main text display ──
                         LazyColumn(
                             state = listState,
                             modifier = Modifier
@@ -413,7 +525,6 @@ fun PromptPlayerApp(viewModel: PromptViewModel = viewModel()) {
                             }
                         }
 
-                        // ── Recognized text overlay (fades in from bottom) ──
                         AnimatedVisibility(
                             visible = recognizedText.isNotEmpty(),
                             enter = fadeIn(animationSpec = tween(300)),
@@ -444,7 +555,6 @@ fun PromptPlayerApp(viewModel: PromptViewModel = viewModel()) {
                             }
                         }
 
-                        // ── Error banner ──
                         speechError?.let { error ->
                             Snackbar(
                                 modifier = Modifier
@@ -462,7 +572,111 @@ fun PromptPlayerApp(viewModel: PromptViewModel = viewModel()) {
         }
     }
 
-    // ── Settings BottomSheet ──
+    // Text input dialog
+    if (showTextInputDialog) {
+        Dialog(
+            onDismissRequest = { showTextInputDialog = false },
+            properties = DialogProperties(usePlatformDefaultWidth = false)
+        ) {
+            Card(
+                modifier = Modifier
+                    .fillMaxWidth(0.92f)
+                    .fillMaxHeight(0.75f),
+                colors = CardDefaults.cardColors(containerColor = SurfaceDark),
+                shape = RoundedCornerShape(20.dp)
+            ) {
+                Column(
+                    modifier = Modifier
+                        .fillMaxSize()
+                        .padding(24.dp)
+                ) {
+                    Text(
+                        text = "手动输入文稿",
+                        fontSize = 18.sp,
+                        fontWeight = FontWeight.SemiBold,
+                        color = Color.White
+                    )
+                    Spacer(Modifier.height(16.dp))
+
+                    OutlinedTextField(
+                        value = textInputName,
+                        onValueChange = { textInputName = it },
+                        label = { Text("文稿名称（可选）", fontSize = 12.sp) },
+                        singleLine = true,
+                        modifier = Modifier.fillMaxWidth(),
+                        colors = OutlinedTextFieldDefaults.colors(
+                            focusedTextColor = Color.White,
+                            unfocusedTextColor = Color.White.copy(alpha = 0.7f),
+                            focusedBorderColor = AccentBlue,
+                            unfocusedBorderColor = Color.White.copy(alpha = 0.15f),
+                            focusedLabelColor = AccentBlue,
+                            unfocusedLabelColor = Color.White.copy(alpha = 0.4f),
+                            cursorColor = AccentBlue
+                        )
+                    )
+                    Spacer(Modifier.height(12.dp))
+
+                    OutlinedTextField(
+                        value = textInputContent,
+                        onValueChange = { textInputContent = it },
+                        placeholder = {
+                            Text(
+                                "在此输入或粘贴提词内容...",
+                                fontSize = 13.sp,
+                                color = Color.White.copy(alpha = 0.3f)
+                            )
+                        },
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .weight(1f),
+                        colors = OutlinedTextFieldDefaults.colors(
+                            focusedTextColor = Color.White,
+                            unfocusedTextColor = Color.White.copy(alpha = 0.7f),
+                            focusedBorderColor = AccentBlue,
+                            unfocusedBorderColor = Color.White.copy(alpha = 0.15f),
+                            cursorColor = AccentBlue
+                        ),
+                        textStyle = androidx.compose.ui.text.TextStyle(
+                            fontSize = 14.sp,
+                            lineHeight = 22.sp
+                        )
+                    )
+                    Spacer(Modifier.height(16.dp))
+
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.End
+                    ) {
+                        TextButton(onClick = {
+                            showTextInputDialog = false
+                            textInputContent = ""
+                            textInputName = ""
+                        }) {
+                            Text("取消", color = Color.White.copy(alpha = 0.5f))
+                        }
+                        Spacer(Modifier.width(12.dp))
+                        Button(
+                            onClick = {
+                                viewModel.saveUserText(context, textInputContent, textInputName)
+                                sentences = viewModel.sentences
+                                showTextInputDialog = false
+                                textInputContent = ""
+                                textInputName = ""
+                                currentIndex = 0
+                                lastMatchedIndex = 0
+                            },
+                            enabled = textInputContent.isNotBlank(),
+                            colors = ButtonDefaults.buttonColors(containerColor = AccentBlue),
+                            shape = RoundedCornerShape(12.dp)
+                        ) {
+                            Text("保存并开始", fontSize = 14.sp)
+                        }
+                    }
+                }
+            }
+        }
+    }
+
     if (showSettings) {
         ModalBottomSheet(
             onDismissRequest = { showSettings = false },
@@ -478,7 +692,6 @@ fun PromptPlayerApp(viewModel: PromptViewModel = viewModel()) {
     }
 }
 
-// ── Sentence item with three-tier visual hierarchy ──
 @Composable
 private fun SentenceItem(
     text: String,
@@ -489,10 +702,6 @@ private fun SentenceItem(
     val distance = kotlin.math.abs(index - currentIndex)
     val transitionRadius = 6f
 
-    // Three tiers:
-    // 1. Already read  (index << currentIndex) — dimmed, small
-    // 2. Current       (index ≈ currentIndex) — highlighted, large, accent color
-    // 3. Upcoming      (index >> currentIndex) — normal white
     val isRead = index < currentIndex - 0.5f
     val isCurrent = distance <= 1.5f
 
@@ -530,7 +739,6 @@ private fun SentenceItem(
     }
 }
 
-// ── Font settings bottom sheet ──
 @Composable
 private fun FontSettingsPanel(
     currentSize: Int,
@@ -544,7 +752,6 @@ private fun FontSettingsPanel(
             .padding(horizontal = 24.dp)
             .padding(bottom = 40.dp)
     ) {
-        // Drag handle
         Box(
             modifier = Modifier
                 .align(Alignment.CenterHorizontally)
@@ -563,7 +770,6 @@ private fun FontSettingsPanel(
         )
         Spacer(Modifier.height(20.dp))
 
-        // Font size label row
         Row(
             modifier = Modifier.fillMaxWidth(),
             horizontalArrangement = Arrangement.SpaceBetween,
@@ -594,28 +800,6 @@ private fun FontSettingsPanel(
                 activeTrackColor = AccentBlue,
                 inactiveTrackColor = Color.White.copy(alpha = 0.15f)
             )
-        )
-
-        // Preview
-        Spacer(Modifier.height(20.dp))
-        Text(
-            text = "预览",
-            fontSize = 12.sp,
-            color = Color.White.copy(alpha = 0.4f)
-        )
-        Spacer(Modifier.height(8.dp))
-        Text(
-            text = "欢迎使用提词器，您可以在此预览当前字体大小效果。",
-            fontSize = sliderValue.sp * 0.6f,
-            color = Color.White.copy(alpha = 0.6f),
-            textAlign = TextAlign.Center,
-            modifier = Modifier
-                .fillMaxWidth()
-                .background(
-                    color = Color.White.copy(alpha = 0.05f),
-                    shape = RoundedCornerShape(12.dp)
-                )
-                .padding(16.dp)
         )
     }
 }

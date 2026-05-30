@@ -24,6 +24,8 @@ gradle-8.4/
 *.zip
 *.png
 *.txt
+*.doc
+*.docx
 
 # Misc
 *.log
